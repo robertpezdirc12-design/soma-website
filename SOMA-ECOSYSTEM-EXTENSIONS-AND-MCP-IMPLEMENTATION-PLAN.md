@@ -760,3 +760,352 @@ Ne poskušaj narediti vsega hkrati. Priporočeni vrstni red:
 10. **Dokumentacija, vodiči in showcase šele po uspešnem preverjanju**
 
 **Končni cilj:** SOMA naj ne bo samo CAD program z velikim številom dodatkov. Postati mora varno razširljiv CAD sistem, v katerem AI agenti uporabljajo preverjene geometrijske funkcije, strokovne Skills in zunanje povezovalnike, medtem ko so modeli, meritve, izvozi in konstrukcijske odločitve sledljivi ter preverljivi.
+
+
+---
+
+# 15. Dodatna raziskava: reverse engineering, katalog komponent in geometrijski pregled
+
+Ta dodatek je nastal po dodatni raziskavi 25. 11. 2026. Vključuje projekte, ki v prvotnem načrtu niso bili dovolj konkretno obravnavani. Najpomembnejši novi predlogi so **mesh2cad**, **step.parts**, **Open3D + COLMAP**, **argus-diff** in **SALib**.
+
+## 15.1 Mesh2CAD – najmočnejši novi kandidat za SOMA
+
+**Projekt:** [emirmrkaljevic/mesh2cad](https://github.com/emirmrkaljevic/mesh2cad)  
+**Pregledana različica:** 0.32.0  
+**Zadnji pregledani razvojni zapis:** 20. 11. 2026; changelog 0.32.0 je datiran 19. 11. 2026  
+**Licenca:** MIT  
+**Zahteve:** Python >=3.10, OpenCascade prek `cadquery-ocp >=7.8,<8`; opcijsko MCP in CadQuery.
+
+To je ena najbolj konkretnih funkcionalnosti, ki jih je smiselno dodati ob SOMA CAD-jedru: iz STL/OBJ/PLY mreže poskuša obnoviti analitične površine in iz njih narediti pravi STEP BREP ter po možnosti urejeno parametrično CAD-kodo.
+
+Ponuja:
+- pretvorbo STL, OBJ in PLY v STEP;
+- analizo mreže in prepoznavanje ravnin, valjev, stožcev, krogel in določenih radijev;
+- generiranje parametričnega CadQuery, OpenSCAD ali FreeCAD izhoda;
+- poročilo o odstopanju (Hausdorff/RMS), volumnu, metodah in tipih ploskev;
+- urejanje identificiranih parametrov in ponovno gradnjo modela;
+- lastni MCP strežnik prek stdio z orodji `convert`, `analyze`, `report`, `to_cadquery`, `to_openscad`, `to_freecad`, `list_params` in `edit_params`.
+
+V README je prikazanih šest originalnih Prusa i3 MK3S delov, pri katerih je projekt poročal o veljavnem analitičnem STEP izhodu. To so konkretni testni primeri, ne dokaz, da bo uspešno rekonstruiral vsak STL. Dokumentacija jasno navaja omejitve pri prostih organskih površinah in primerih izven prepoznanega konstrukcijskega besedišča. Ko analitični fit ne uspe, lahko izhod postane hibridna ali fasetirana geometrija; poročilo mora to razliko jasno pokazati.
+
+**Priporočilo: zelo visoka prioriteta za POC.** V primerjavi z generičnim image-to-3D modelom rešuje bližji inženirski problem: iz mreže mehanskega dela vrniti CAD-geometrijo, ki jo je mogoče odpreti, izmeriti in po določenih mejah spreminjati.
+
+### Kako ga povezati s SOMA
+
+Ne namesti ga takoj v SOMA globalni Python runtime. Njegova odvisnost `cadquery-ocp` lahko vpliva na različico OCP, ki jo uporablja SOMA. Prednostna izvedba:
+
+1. Mesh2CAD najprej zaženi kot ločen lokalni proces v namenskem virtualnem okolju.
+2. SOMA naj mu preda samo izbrano datoteko iz aktivnega projekta.
+3. Vhodno datoteko preveri po velikosti, formatu, številu trikotnikov in varnem kanoničnem project path.
+4. Izhod naj se zapiše v dovoljen projektni imenik, ne na poljubno pot.
+5. Preberi fidelity report in zavrni STEP, če ni prestal izbranih meril.
+6. STEP ponovno odpri z OCP v SOMA in izvedi BREP, dimenzijski, volumenski in topološki pregled.
+7. Parametrični CadQuery skript sprejmi le, če je njegov vir zaupanja vreden in je preverjanje zgradbe uspešno.
+8. Ohraniti je treba originalni mesh, izvorne merske enote, tolerance, hash in poročilo.
+
+**MCP varnost:** Mesh2CAD MCP orodja sprejemajo poti do datotek in lahko ustvarjajo/spreminjajo datoteke. Ne dovoli mu dostopa do celotnega diska. Pred integracijo preglej dejansko kodo path handling, symlink obravnavo, imenovanje izhodov in ali orodje lahko prebere ali prepiše datoteko zunaj projekta.
+
+## 15.2 ObjectDNA – dober drugi pristop in vzorec za sledljivost mer
+
+**Projekt:** [nazeeh111/ObjectDNA](https://github.com/nazeeh111/ObjectDNA)  
+**Pregledana razvojna različica:** 0.1.1.dev0  
+**Licenca:** MIT  
+**Zahteve v trenutnem README:** Python 3.12; preizkušeno okolje je Apple Silicon macOS z CadQuery 2.6.1.
+
+ObjectDNA ima nekoliko drugačen pristop kot Mesh2CAD. Iz prečiščenega point clouda ali mreže išče omejeno parametrično hipotezo za tri družine mehanskih oblik: nosilce, odprta ohišja in bloke z izvrtinami. Uporabnik vidi prekrivanje skena in CAD-modela, lahko spremeni dimenzije in nato obnovi dejanski solid. Projekt izvaža STEP, STL, CadQuery skripto in evidenco o izvornih točkah.
+
+Njegova najpomembnejša ideja ni samo geometrija, temveč ločevanje:
+- izmerjenih opažanj;
+- algoritmično predlagane konstrukcijske hipoteze;
+- naknadne spremembe uporabnika;
+- neznanih lastnosti, ki jih sken ne more potrditi.
+
+To je zelo dobra zasnova za SOMA in Draftwright: popravljena dimenzija ne sme biti predstavljena kot nova izmerjena mera. Nevidne votline, material, funkcija, skrite tolerance in mehanske lastnosti ostanejo neznane, dokler jih ne potrdi drug vir.
+
+**Priporočilo:** ne kopiraj celotnega programa. Preuči njegov evidence/provenance model in način, kako prepreči izvajanje poljubne naložene Python kode. Uporabi ga kot primer uporabniškega vmesnika za scan-to-CAD in kot drugi benchmark poleg Mesh2CAD.
+
+Pomembne omejitve:
+- podpira le tri družine modelov;
+- njegova fotografija/VGGT povezava ni potrjena od začetka do konca;
+- fizični skeni v dokumentiranih primerih nimajo neodvisno izmerjene dimensional ground truth;
+- Windows ni potrjen v opisanem testnem okolju;
+- ne gre za univerzalni pretvornik fotografij v proizvodni CAD.
+
+## 15.3 Open3D – obdelava 3D podatkov pred izdelavo CAD
+
+**Projekt:** [isl-org/Open3D](https://github.com/isl-org/Open3D)  
+**Licenca:** MIT  
+**Podprte Python različice po trenutni dokumentaciji:** 3.10–3.14  
+**Podprti OS:** Ubuntu, macOS in Windows 10+ 64-bit.
+
+Open3D je zrel 3D-data toolkit, ne CAD kernel. Omogoča:
+- registracijo in poravnavo več point cloudov;
+- filtriranje šuma in outlierjev;
+- segmentacijo ravnin in geometrijskih območij;
+- meritve in primerjavo point cloudov;
+- obdelavo mrež in rekonstrukcijo površin;
+- 3D vizualizacijo in določene GPU/ML postopke.
+
+**Priporočilo:** uvedi kot opcijski modul `soma-scan`, če se pokaže potreba po obdelavi 3D skenov. Njegova funkcija bi bila priprava in poravnava podatkov za Mesh2CAD ali drugo rekonstrukcijsko metodo. Ne dodajaj ga v osnovni runtime brez meritev velikosti, hitrosti in porabe RAM-a.
+
+Open3D sam ne ustvari proizvodno parametričnega CAD modela. To mora narediti nadaljnji CAD fitter oziroma uporabnik.
+
+## 15.4 COLMAP / PyCOLMAP – fotografije v 3D sken
+
+**Projekt:** [colmap/colmap](https://github.com/colmap/colmap)  
+**Licenca:** BSD 3-Clause za COLMAP samo; odvisnosti imajo lahko svoje licence.  
+**Vzdrževanje:** razvoj se nadaljuje v glavnem repozitoriju; zadnji pregledani commit 25. 11. 2026.
+
+COLMAP je SfM/MVS pipeline: iz več fotografij predmeta izračuna kamere, redko 3D strukturo in lahko tudi gosto rekonstrukcijo. PyCOLMAP so Python bindings v istem glavnem repozitoriju. Uradna dokumentacija navaja tudi CUDA 12 wheel za Linux; GPU podpora in razpoložljivost sta odvisni od platforme in builda.
+
+To je dobra stopnja za uporabnika, ki predmet fotografira iz več prekrivajočih se kotov. Ni rešitev za čarobno pretvorbo ene fotografije v natančen inženirski model.
+
+### Predlagani pipeline
+
+```
+Več prekrivajočih se fotografij
+             |
+         COLMAP
+  kamera + point cloud / mesh
+             |
+          Open3D
+ poravnava + čiščenje + segmentacija
+             |
+         Mesh2CAD
+ analitični STEP + parametrični poskus
+             |
+           SOMA
+ BREP + mere + sestav + risba + export
+             |
+      uporabniška potrditev
+```
+
+Za uporabo v milimetrih mora uporabnik zagotoviti merilo (znano dolžino, kalibriran marker ali drug referenčni podatek). Sam point cloud brez merila ne omogoča zanesljive absolutne dimenzije. Tudi dobro rekonstruirana površina ne razkrije nujno skritih votlin, materiala ali konstrukcijske funkcije.
+
+**Priporočilo:** dodaj kot opcijski zunanji lokalni proces, ne v SOMA runtime. Za običajni uporabniški računalnik naj bo mogoče uporabiti tudi obstoječo skenirno aplikacijo in uvoziti PLY/OBJ/PTS, brez zahteve po COLMAP.
+
+## 15.5 STEP.Parts – katalog standardnih in drugih CAD komponent
+
+**Projekt/storitev:** [step.parts](https://www.step.parts/)  
+**API:** [api.step.parts](https://api.step.parts/)  
+**Pregledan obseg kataloga:** 16.847 STEP komponent.
+
+Ta katalog je uporaben kot vir zunanjih komponent. Ponuja iskanje standardnih in drugih odprtih CAD modelov, med njimi pritrdilne elemente, ležaje, profile, motorje, elektroniko, konektorje in druge komponente.
+
+Njegovi strojno berljivi podatki navajajo API za:
+- paginirano iskanje komponent;
+- pridobitev posameznega zapisa;
+- oznako, kategorijo in družino dela;
+- dimenzijske atribute in standard, če so znani;
+- STEP datoteko ter GLB/PNG predogled;
+- SHA-256 za preverjanje prenesene datoteke;
+- izvor in licenco posameznega modela.
+
+**Priporočilo: zgraditi SOMA Component Browser.** To je bolj koristno kot množično kopiranje katalogov. Uporabnik išče npr. ležaj 608ZZ, GT2 jermenico, aluminijasti profil 20×40 ali motor, vidi predogled, dimenzije in pogoje uporabe, nato komponento prenese v trenutni projekt.
+
+Obvezna pravila:
+1. Ne prenesi ali zrcali celotnega kataloga.
+2. Pri vsakem modelu posebej preveri licenco, avtorja, izvor in dovoljene načine uporabe.
+3. Ohrani podatke o avtorstvu, izvorni strani, različici in SHA-256.
+4. Preden se komponenta vključi v proizvodno sestavo, jo preveri v SOMA (STEP readback, mere, volumen, enote, BREP).
+5. Katalog je vir geometrije, ne dokaz standardne skladnosti, tolerančnega razreda ali materiala.
+6. Vmesnik mora jasno ločiti verified measurements od opisnih metapodatkov, ki jih je prispeval vir.
+7. Če je licenca neznana, modela ne distribuiraj; lahko ga prikažeš kot zunanji referenčni link.
+
+### Dodatni katalogi
+
+- [PythonParts](https://pythonparts.org/) – knjižnica parametričnih delov, kjer je del predstavljen kot koda in parametri, ne le kot statičen STEP. Dodatno preveri založnika, licenco in izvor vsakega recepta; trenutni katalog je precej koncentriran pri malo ponudnikih.
+- [FreeCAD/FreeCAD-library](https://github.com/FreeCAD/FreeCAD-library) – velika knjižnica modelov; README opozarja na velikost približno 5 GB in zahteva CC-BY 3.0 atribucijo. Ne vgrajuj ali zrcali celotne knjižnice. Uporabi le izbrane modele, pri katerih je mogoče dokazati izvor in licenco.
+- [CadQuery/cq_warehouse](https://github.com/gumyr/cq_warehouse) – ostaja boljši prvi kandidat za parametrično knjižnico v kodi, ker se deli ustvarjajo na podlagi parametrov; STEP.Parts je boljši za uvoz že obstoječih zunanjih komponent.
+
+## 15.6 argus-diff – geometrijski Git diff in avtomatizirani QA
+
+**Projekt:** [mikelmyers/argus-diff](https://github.com/mikelmyers/argus-diff)  
+**Licenca:** MIT  
+**Status po README:** Alpha.
+
+Primerja dve različici STEP/STL/3MF/OBJ/PLY in poroča o:
+- dodanih, odstranjenih in spremenjenih telesih;
+- volumskih in masnih razlikah;
+- spremembi bounding boxa;
+- lokaliziranih BREP spremembah (npr. sprememba polmera cilindrične ploskve);
+- interferencah med telesi;
+- vizualnem overlayu in renderju;
+- CI pravilih, ki lahko označijo PR kot neuspešen.
+
+**Priporočilo:** dodaj kot raziskovalno CI orodje na testni veji. Najprej ga uporabi za regresijske primerjave SOMA primerov, nato preveri rezultate proti znanim ročno označenim spremembam. Ne uporabljaj ga še kot edini produkcijski varnostni gate: README izrecno označuje status Alpha, pri mesh datotekah pa je interference pregled izpuščen, ne pa potrjen kot nič.
+
+SOMA lahko razvije tudi lasten lažji geometrijski baseline iz OCP fingerprintov (volumen, površina, težišče, bounding box, število teles/ploskev) in argus-diff uporablja kot zunanjo primerjavo.
+
+## 15.7 SALib – analiza občutljivosti parametrov
+
+**Projekt:** [SALib/SALib](https://github.com/SALib/SALib)  
+**Licenca:** MIT  
+**Zahteva:** Python >=3.10; NumPy >=2.0, SciPy, matplotlib, pandas in multiprocess.  
+**Zadnji pregledani commit:** 22. 11. 2026.
+
+SALib vsebuje metode Sobol, Morris, FAST, DGSM, PAWN in druge metode globalne analize občutljivosti.
+
+To bi SOMA omogočilo odgovoriti na vprašanja:
+- kateri parametri najbolj vplivajo na maso konstrukcije;
+- kateri parametri najbolj vplivajo na upogib ali napetost v FEM;
+- ali sprememba debeline stene veliko vpliva na deformacijo;
+- kateri parametri so skoraj nepomembni;
+- kje je smiselno dodati dodaten test ali uporabniku ponuditi boljše nastavljive parametre.
+
+**Priporočilo:** poznejši neobvezni modul `Design Exploration`, ne del osnovnega CAD runtime. Vsaka analiza mora poročati o razponu vhodnih parametrov, številu izvedenih CAD/FEM izračunov, neuspelih simulacijah in predpostavkah. SALib ne dokazuje trdnosti konstrukcije; analizira vpliv vhodnih parametrov na rezultat izračunov, ki morajo biti sami pravilni.
+
+### Pymoo – multi-objective optimization
+
+[pymoo](https://pymoo.org/) je zmogljiv okvir za optimizacijo z več cilji, vključno z NSGA-II in NSGA-III. Trenutna dokumentacija navaja različico 0.6.2.
+
+**Vendar ga ne dodajaj samodejno:** njegova dokumentacija za profit-making uporabo uporabnika izrecno usmerja v stik z razvijalcem. Pred vključitvijo v distribucijo SOMA je treba pridobiti pisno pojasnilo licenčnih in komercialnih pogojev. Za začetek uporabite obstoječi SciPy optimization ali drug paket z jasno preverjeno licenco. Ne tvegaj, da se poslovni izdelek opira na nejasne distribucijske pogoje.
+
+## 15.8 CNC simulacija – CAMotics
+
+**Projekt:** [CauldronDevelopmentLLC/CAMotics](https://github.com/CauldronDevelopmentLLC/CAMotics)  
+**Licenca:** GPL-2.0-or-later  
+**Funkcija:** simulacija 3-osnega CNC G-code.
+
+CAMotics lahko po CAM generiranju prikaže, kako bo orodje odstranjevalo material, in pomaga odkriti napake poti. To ni CAM generator in ne nadomesti postprocesorja, ki mora ustrezati dejanskemu stroju/kontrolerju.
+
+**Priporočilo:** šele po tem, ko SOMA dobi zanesljiv CAM workflow. Za začetek ga poveži kot zunanjo aplikacijo, v katero SOMA izvozi G-code in stock/tool podatke. Ne vgrajuj GPL-2.0 kode v SOMA brez licenčne analize. Simulacija ne nadomesti preverjanja ničelne točke, dolžin orodij, vpenjal, stroja in varnega suhega zagona.
+
+## 15.9 IFC / BIM – samo namenski zunanji modul
+
+**Projekt:** [IfcOpenShell/IfcOpenShell](https://github.com/IfcOpenShell/IfcOpenShell)  
+**Licenca:** LGPL-3.0-or-later za glavne Python/C++ komponente; posamezni dodatki imajo lahko drugo licenco.  
+**Dodatno:** projekt navaja `ifcmcp`, MCP za poizvedovanje in urejanje IFC modelov.
+
+To ni nujen dodatek za splošni strojni CAD. Lahko pa postane uporaben, kadar SOMA obravnava terase, nadstreške, ograje, stavbne elemente in povezavo z BIM projekti.
+
+**Priporočilo:** opcijski IFC bridge, ki uvozi ali izvozi projektno geometrijo in lastnosti, ne pa zamenjava SOMA CAD jedra. Vnaprej preveri LGPL zahteve, izvoz IFC sheme in semantično mapiranje elementov.
+
+## 15.10 ezdxf – ne dodajaj nove knjižnice, razširi obstoječo
+
+SOMA že uporablja `ezdxf` v tehničnem risanju. Projekt [mozman/ezdxf](https://github.com/mozman/ezdxf) je MIT in podpira branje, spreminjanje, ustvarjanje ter audit DXF dokumentov, tudi starejših DXF različic in novejših R2018 datotek.
+
+**Priporočilo:** ne namesti druge DXF knjižnice. Razširi obstoječo funkcionalnost SOMA:
+- DXF audit po izvozu;
+- kontrola enot in merila;
+- kontrola layerjev, besedila, dimenzij in blokov;
+- uvoz DXF kot referenčne skice;
+- round-trip DXF in primerjava geometrije;
+- poročilo o neznanih ali neveljavnih DXF entitetah.
+
+---
+
+# 16. Nov predlagani delovni tok: od skena do preverljivega CAD
+
+To je najzanimivejša nova funkcionalna celota, ki jo je smiselno razviti poleg obstoječega parametričnega modeliranja.
+
+## 16.1 Vhodni načini
+
+- STEP/IGES – že obstaja CAD geometrija; najprej neposreden uvoz, ne reverse engineering.
+- STL/OBJ/PLY – mreža brez parametrične zgodovine; Mesh2CAD poskusi prepoznati analitične površine.
+- PTS/XYZ/PCD – point cloud; Open3D izvede čiščenje in poravnavo, nato CAD fitter.
+- Več fotografij – COLMAP/pycolmap poskuša rekonstruirati kamere in 3D podatke, nato Open3D in CAD fitter.
+- Ena fotografija/skica – Draftwright izlušči risarske podatke in znane mere; manjkajoče podatke označi kot neznane, namesto da jih domisli.
+
+## 16.2 Obvezni statusi geometrije
+
+Vsaka površina oziroma element mora imeti izvorni status:
+
+- **Measured** – neposredno merjeno ali izrecno podano s strani uporabnika.
+- **Reconstructed** – izračunano iz skena/fotografij z navedeno metodo in odstopanjem.
+- **Inferred** – predlagano iz konstrukcijskega vzorca; še ni potrjeno.
+- **Designed** – uporabnik ali agent je določil novo konstrukcijsko mero.
+- **Unknown** – ni dovolj podatkov za zanesljiv zaključek.
+
+Ne zamenjuj teh kategorij. Parametrični model je lahko veljaven BREP, a vseeno napačna interpretacija dejanskega izdelka.
+
+## 16.3 Poročilo rekonstrukcije
+
+Vsak sken ali mesh, ki se pretvori v CAD, naj ustvari:
+- originalni input file + SHA-256;
+- sistem enot in kalibracijo;
+- izvorne koordinate in transformacijo;
+- tip rekonstrukcije;
+- prepoznane ploskve in operacije;
+- residual RMS in max deviation;
+- volumensko razliko;
+- delež analitičnih in fasetiranih površin;
+- zavrnjene ali neprepoznane regije;
+- parametre, ki jih uporabnik lahko spreminja;
+- omejitve, ki jih je treba ročno potrditi.
+
+Model brez znane merske skale ne sme dobiti statusa »natančen v mm«.
+
+---
+
+# 17. Nove prioritete po dodatni raziskavi
+
+Prvotni fazni načrt ohrani, vendar dodaj te prioritete:
+
+| Prioriteta | Kandidat/funkcija | Zakaj | Odločitev |
+|---|---|---|---|
+| P0 | Mesh2CAD POC | STL/OBJ/PLY v STEP in parametrični CAD, MCP, poročila o odstopanjih | Najprej izoliran Windows test |
+| P0 | STEP.Parts Component Browser | Dostop do velike knjižnice realnih STEP komponent | API POC, per-part licence in hash |
+| P1 | Open3D scan preprocessing | Čiščenje, poravnava, segmentacija 3D podatkov | Opcijski modul |
+| P1 | Geometry diff / argus-diff | Geometrijski review in CI sprememb | Benchmark na SOMA testnih modelih |
+| P1 | Evidence/provenance model | Loči izmerjeno, rekonstruirano in načrtovano | Razširi obstoječe Skills/projektne podatke |
+| P1 | COLMAP | Več fotografij v point cloud/mesh | Ločen opt-in lokalni program |
+| P2 | SALib Design Exploration | Občutljivost parametrov in FEM rezultatov | Projektni extra po validaciji |
+| P2 | CAMotics | Neodvisna simulacija 3-osnega G-code | Šele po CAM pipelineu |
+| P3 | IfcOpenShell | BIM/IFC izmenjava | Samo ob uporabniški potrebi |
+
+## 17.1 Kaj izrecno ne dodajaj
+
+- **Point2STEP** – zanimiv raziskovalni projekt, vendar je članek v repozitoriju označen kot še čakajoč na sprejem; v neuspešnih primerih se lahko vrne proxy STEP, ki zahteva ročno urejanje.
+- **Nedokazani generični image-to-CAD modeli** – ne trdi, da ena fotografija zagotavlja dimenzijsko pravilen solid.
+- **VGGT in drugi modeli z nekomercialnimi omejitvami** – preveri licenco modelnih uteži, ne samo licence Python kode. Nekateri checkpointi so CC BY-NC ali pod lastnimi omejevalnimi pogoji; ne bundlaj jih v komercialni produkt.
+- **Celotna FreeCAD Parts Library** – prevelika za osnovni paket in zahteva atribucijo; izbiraj posamezne modele.
+- **Vse MCP strežnike hkrati** – manjši, nadzorovan nabor je varnejši in lažji za podporo.
+- **Drugo CAD jedro samo zaradi AI** – ne uvajaj build123d, FreeCAD in drugih jeder vzporedno, če obstoječi CadQuery/OCP že rešuje isti problem.
+- **Pymoo za komercialno distribucijo brez preverjene pravice uporabe** – trenutna dokumentacija zahteva stik za profit-making uporabo.
+- **CAMotics kot del samega CAD jedra** – uporabi ga kot zunanji simulator in najprej razreši GPL-2.0 posledice.
+
+## 17.2 Prva tri konkretna dokazna testa
+
+Coding agent naj po baseline-u pripravi tri merljive prototipe:
+
+**Test A – Mesh2CAD**
+- izberi pet različnih obstoječih SOMA testnih meshov;
+- dodaj vsaj dva realna mehanska dela z znanimi merami;
+- primerjaj STEP output, parametrični output, residual, volume delta in BREP validity;
+- zapiši, kaj se rekonstruira analitično in kaj ostane fasetirano;
+- preveri, ali je v SOMA mogoče ohraniti originalni mesh in dokazni zapis.
+
+**Test B – Component Browser**
+- poišči 10 resnično uporabnih komponent (ležaj, vijak, profil, konektor, motor, zobnik);
+- pridobi metapodatke, preview in STEP;
+- preveri hash, izvor, licenco, enote in dimenzije;
+- izberi eno komponento in jo vstavi v pravi SOMA assembly;
+- preveri, ali so ime, lokacija, barva in razmerja ohranjeni.
+
+**Test C – Geometry diff**
+- izdela dve različici istega SOMA modela;
+- spremeni samo eno dimenzijo;
+- spremeni en vijak/element sestava;
+- povzroči en načrtovan trk;
+- preveri, ali poročilo pravilno označi dodano/odstranjeno/spremenjeno geometrijo, volumensko razliko in interference;
+- napačnega rezultata ne spremeni v CI blocker, dokler ni primerjan z ročno potrjeno referenco.
+
+---
+
+# 18. Posodobljena končna priporočila
+
+Največ dodane vrednosti za SOMA trenutno ne prinaša še en velik AI model, temveč povezava naslednjih slojev:
+
+1. **CadQuery/OCP** za pravi parametrični CAD.
+2. **Mesh2CAD** za rekonstrukcijo mehanskih delov iz obstoječih mesh datotek.
+3. **Open3D + COLMAP** kot opcijska priprava 3D podatkov iz skenov in več fotografij.
+4. **STEP.Parts + cq_warehouse** za ponovno uporabo standardnih in dejanskih komponent.
+5. **SOMA typed MCP** za nadzorovano upravljanje orodij s strani AI agentov.
+6. **Geometrijski QA + argus-diff benchmark** za preverjanje sprememb in izvozov.
+7. **SALib** za analizo občutljivosti parametrov, ko je osnovni FEM/analitični izračun potrjen.
+8. **Draftwright** kot specializirani vhod za skice, profile, mere in konstrukcijska pravila ograj/teras.
+
+**Moje najmočnejše novo priporočilo je Mesh2CAD + Open3D + SOMA.** To lahko SOMA razširi od programskega CAD modeliranja tudi na reverse engineering obstoječih fizičnih delov. Druga najpomembnejša razširitev je Component Browser, ker agentu omogoča uporabiti dejanske že obstoječe komponente namesto izmišljanja njihovih oblik.
+
+Te integracije naj bodo ločeni, preverjeni moduli. SOMA mora ostati stabilna, če uporabnik nobenega od teh dodatkov ne namesti.
