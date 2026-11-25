@@ -79,3 +79,8 @@ It needs a built app in `../app` (`npm run build` there) and opens copies of the
 ## Assets
 
 Screenshots come from the SOMA repository. The showcase video on the home page (`public/media/soma-showcase.mp4`, captions `.en.vtt`, cover `images/showcase-cover.jpg`) is the final `video/showcase/SOMA-Showcase.mp4` of the SOMA repository, re-encoded for the web (H.264 CRF 26, at most 2.5 Mbit/s); its credits are under the video. Fonts: IBM Plex Sans and Mono, SIL Open Font License (`public/fonts/OFL.txt`).
+
+
+## Technical development plan
+
+The comprehensive research and implementation plan for expanding SOMA with CAD libraries, Agent Skills, MCP servers, external connectors, CAD/CAE bridges, security controls, testing and the Draftwright integration is documented in [SOMA – ecosystem extensions and MCP implementation plan](SOMA-ECOSYSTEM-EXTENSIONS-AND-MCP-IMPLEMENTATION-PLAN.md).
